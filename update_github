@@ -1,0 +1,4 @@
+cd ~/MemEx
+git add -A
+git remote add origin github.com/rdt249/MemEx.git
+git push -u origin main
