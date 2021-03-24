@@ -1,0 +1,6 @@
+IP=$(hostname -I)
+echo "Starting public notebook with IP: $IP in 5 seconds"
+echo "Use CTRL+A then D to detach and leave running in background"
+sleep 5
+screen jupyter notebook --ip $IP
+echo "use CTRL+A then D to detach and leave running"
