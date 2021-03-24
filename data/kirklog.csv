@@ -1,2 +1,2 @@
 ThermTemp(C),HygroTemp(C),RelativeHumidity(%),MainCurrent(mA),MainVoltage(V),MainPower(mW),SDCurrent(mA),SDVoltage(V),SDPower(mA)
-23.5,23.83306630045014,43.54009308003357,157.5,5.25,990,5.0,5.3275,10
+23.5,23.83306630045014,43.59502555886168,161.25,5.35625,910,2.5,5.3525,10
