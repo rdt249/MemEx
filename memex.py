@@ -76,6 +76,7 @@ class sd_card(object):
         self.cs = cs # set chip select pin
         self.name = name # set name tag
         self.spi_hz = spi_hz # set max spi rate
+        self.block_size = None
         
         self.spi.open(self.bus,self.cs) # open spi comms
         spi.max_speed_hz = self.spi_hz # set max spi hz
@@ -144,4 +145,47 @@ class sd_card(object):
                 print("Error in memex.sd_card.init(): timed out")
                 break
         return response
+    
+    def set_block_size(self,size,timeout = 1):
+        start = time.time()
+        self.block_size = size
+        data = [(size>>24)&0xff, (size>>16)&0xff, (size>>8)&0xff, size&0xff]
+        self.spi.open(self.bus,self.cs) # open spi comms
+        self.spi.max_speed_hz = self.spi_hz # set max spi hz
+        self.spi.writebytes([0x16] + data + [0xff,0xff]) # send command, data[4], crc, and dummy
+        response = self.spi.readbytes(1)[0] # get response
+        while response not in [0]: # check if response is acceptable
+            response = self.spi.readbytes(1)[0] # get response
+            if time.time() - start > timeout: # check timeout
+                print("Error in memex.sd_card.block_size(): timed out") # print error
+                break # break out of while loop
+        self.spi.close() # close spi comms
+        return response
+
+    def read(self,address,timeout = 1):
+        start = time.time()
+        data = [(address>>24)&0xff, (address>>16)&0xff, (address>>8)&0xff, address&0xff]
+        if self.block_size is None:
+            print("Error in memex.sd_card.read(): block size not set")
+            return -1
+        self.spi.open(self.bus,self.cs) # open spi comms
+        self.spi.max_speed_hz = self.spi_hz # set max spi hz
+        self.spi.writebytes([0x17] + data + [0xff,0xff]) # send command, data[4], crc, and dummy
         
+        response = self.spi.readbytes(1)[0] # get response
+        while response not in [0]: # check if response is acceptable
+            response = self.spi.readbytes(1)[0] # get response
+            if time.time() - start > timeout: # check timeout
+                print("Error in memex.sd_card.read(): timed out") # print error
+                break # break out of while loop
+                
+        response = self.spi.readbytes(1)[0] # get response
+        while response not in [254, 0xfe]: # check if response is acceptable
+            response = self.spi.readbytes(1)[0] # get response
+            if time.time() - start > timeout: # check timeout
+                print("Error in memex.sd_card.read(): timed out") # print error
+                break # break out of while loop
+        
+        data = self.spi.readbytes(self.block_size) # get block data
+        self.spi.close() # close spi comms
+        return data
