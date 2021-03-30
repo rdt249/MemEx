@@ -46,3 +46,102 @@ def sense(): # print output of i2c sensors
     print(*header,sep='\t') # print column titles
     print(*data,sep='\t') # print data
     return data # return sensor data
+
+def track(func,arg = None): # returns the elapsed time for the input function with an argument
+    time_start = time.time() # record time before function starts
+    func(arg) # execute function
+    return time.time() - time.start # find elapsed time
+
+import spidev
+import time
+
+class sd_card(object):
+    ''' 
+    https://openlabpro.com/guide/interfacing-microcontrollers-with-sd-card/
+    http://rjhcoding.com/avrc-sd-interface-3.php
+    
+    Anatomy of an SD card command:
+    
+    Byte:|  1  |  2   |  3   |  4   |  5   |  6   |  7   |  8
+    MOSI:| CMD | data | data | data | data | 0xff | 0xff | 
+    MISO:|     |      |      |      |      |      |      | data
+    
+    Theoretical max SPI rate: 125 MHz
+    Practical max SPI rate: 10 MHz?
+    '''
+    
+    def __init__(self, spi, bus = 0, cs = 0, name = "SD", spi_hz = 10000000): # initialize sd card object
+        self.spi = spi # set up spi comms
+        self.bus = bus # set spi bus (usually 0)
+        self.cs = cs # set chip select pin
+        self.name = name # set name tag
+        self.spi_hz = spi_hz # set max spi rate
+        
+        self.spi.open(self.bus,self.cs) # open spi comms
+        spi.max_speed_hz = self.spi_hz # set max spi hz
+        self.spi.writebytes([0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff]) # send 10 dummy bytes
+        self.spi.close() # close spi comms
+        
+        print("reset:",self.reset())
+        print("version:",self.version())
+        print("read_ocr:",self.read_ocr())
+        print("init:",self.init())
+                  
+    def reset(self,timeout = 1): # reset sd card
+        start = time.time() # record start time
+        self.spi.open(self.bus,self.cs) # open spi comms
+        self.spi.max_speed_hz = self.spi_hz # set max spi hz
+        self.spi.writebytes([0x40,0x00,0x00,0x00,0x00,0x95,0xff]) # send command, data[4], crc, and dummy
+        response = self.spi.readbytes(1)[0] # get response
+        while response not in [1]: # check if response is acceptable
+            response = self.spi.readbytes(1)[0] # get response
+            if time.time() - start > timeout: # check timeout
+                print("Error in memex.sd_card.reset(): timed out") # print error
+                break # break out of while loop
+        self.spi.close() # close spi comms
+        return response
+                  
+    def version(self,timeout = 1): # check sd card version
+        start = time.time() # record start time
+        self.spi.open(self.bus,self.cs) # open spi comms
+        self.spi.max_speed_hz = self.spi_hz # set max spi hz
+        self.spi.writebytes([0x48,0x00,0x00,0x01,0xaa,0x87,0xff]) # send command, data[4], crc, and dummy
+        response = self.spi.readbytes(1)[0] # get response
+        while response not in [1,5]: # check if response is acceptable
+            response = self.spi.readbytes(1)[0] # get response
+            if time.time() - start > timeout: # check timeout
+                print("Error in memex.sd_card.version(): timed out") # print error
+                break # break out of while loop
+        self.spi.close() # close spi comms
+        return response
+    
+    def read_ocr(self): # read the operating conditions register (OCR)
+        self.spi.open(self.bus,self.cs) # open spi comms
+        self.spi.max_speed_hz = self.spi_hz # set max spi hz
+        self.spi.writebytes([0x7a,0x00,0x00,0x00,0x00,0x75,0xff]) # send command, data[4], crc, and dummy
+        response = self.spi.readbytes(5) # get response
+        self.spi.close() # close spi comms
+        return response
+    
+    def init(self,timeout = 1): # initialize sd card: repeat cmd55 then acmd41 until response is 0
+        start = time.time() # record start time
+        response = -1
+        while response not in [0]:
+            # CMD55
+            self.spi.open(self.bus,self.cs) # open spi comms
+            self.spi.max_speed_hz = self.spi_hz # set max spi hz
+            self.spi.writebytes([0x55,0x00,0x00,0x00,0x00,0xff,0xff]) # send command, data[4], crc, and dummy
+            response = self.spi.readbytes(1)[0] # get response
+            self.spi.close() # close spi comms
+            # ACMD41
+            self.spi.open(self.bus,self.cs) # open spi comms
+            self.spi.max_speed_hz = self.spi_hz # set max spi hz
+            self.spi.writebytes([0x41,0x00,0x00,0x00,0x00,0xff,0xff]) # send command, data[4], crc, and dummy
+            response = self.spi.readbytes(1)[0] # get response
+            self.spi.close() # close spi comms
+            # check timeout
+            if time.time() - start > timeout:
+                print("Error in memex.sd_card.init(): timed out")
+                break
+        return response
+        
