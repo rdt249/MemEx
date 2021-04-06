@@ -46,7 +46,7 @@ def sense(): # print output of i2c sensors
     print(*header,sep='\t') # print column titles
     print(*data,sep='\t') # print data
     return data # return sensor data
-
+        
 import spidev
 import time
 
@@ -297,7 +297,7 @@ class sd_card(object):
         
 class sram(object):
     '''
-    based on Microchip 23LC1024
+    based on Microchip 23LC1024 (1 Mbit) and 23K256 (256 kbit)
     https://ww1.microchip.com/downloads/en/DeviceDoc/20005142C.pdf
     '''
     def __init__(self,spi,bus=0,cs=0,size=32,name="SRAM",spi_hz=5000000,debug=False):
@@ -314,12 +314,18 @@ class sram(object):
         self.read_status()
         
     def read_status(self): # read status register
-        tx = [0x05,0xff]
+        if self.debug:
+            print("(read_status)",end=" ")
+        mosi = [0x05,0xff]
+        if self.debug:
+            print("MOSI:",mosi,end="\t|\t")
         self.spi.open(self.bus,self.cs)
         self.spi.max_speed_hz = self.spi_hz
-        rx = self.spi.xfer(tx)
+        miso = self.spi.xfer(mosi)
         self.spi.close()
-        status = rx[1]
+        if self.debug:
+            print("MISO:",miso)
+        status = miso[1]
         # check response
         if status is 0xff:
             print("Error in memex.sram.read_status(): no response")
@@ -339,6 +345,8 @@ class sram(object):
         return status
     
     def set_status(self,mode="sequential",hold=False): # set status with "mode" and "hold"
+        if self.debug:
+            print("(set_status)",end=" ")
         # set mode
         if mode is "byte":
             status = 0
@@ -349,44 +357,84 @@ class sram(object):
         # set hold
         if hold is False:
             status += 1
-        tx = [0x01,status]
+        mosi = [0x01,status]
+        if self.debug:
+            print("MOSI:",mosi,end="\t|\t")
         self.spi.open(self.bus,self.cs)
         self.spi.max_speed_hz = self.spi_hz
-        self.spi.xfer(tx)
+        miso = self.spi.xfer(mosi)
         self.spi.close()
+        if self.debug:
+            print("MISO:",miso)
         return 0
         
     def read(self,address,n=1): # read data starting at address. read multple bytes by defining "n"
+        if self.debug:
+            print("(read)",end=" ")
         # format message
         if self.size < 1024: # 16-bit address
-            tx = [0x03,(address>>8)&0xff,address&0xff] + ([0xff] * n)
+            mosi = [0x03,(address>>8)&0xff,address&0xff] + ([0xff] * n)
         else: # 24-bit address
-            tx = [0x03,(address>>16)&0xff,(address>>8)&0xff,address&0xff] + ([0xff] * n)
+            mosi = [0x03,(address>>16)&0xff,(address>>8)&0xff,address&0xff] + ([0xff] * n)
         # spi transfer
+        if self.debug:
+            print("MOSI:",mosi,end="\t|\t")
         self.spi.open(self.bus,self.cs)
         self.spi.max_speed_hz = self.spi_hz
-        rx = self.spi.xfer(tx)
+        miso = self.spi.xfer(mosi)
         self.spi.close()
+        if self.debug:
+            print("MISO:",miso)
         if self.size < 1024: # 16-bit address
-            data = rx[3:]
+            data = miso[3:]
         else: # 24-bit address
-            data = rx[4:]
+            data = miso[4:]
         return data
     
     def write(self,address,data,n=1): # write data starting at address. write multiple bytes by inputting a list or defining "n"
+        if self.debug:
+            print("(write)",end=" ")
         # format address
         if self.size < 1024: # 16-bit address
-            tx = [0x02,(address>>8)&0xff,address&0xff]
+            mosi = [0x02,(address>>8)&0xff,address&0xff]
         else: # 24-bit address
-            tx = [0x02,(address>>16)&0xff,(address>>8)&0xff,address&0xff]
+            mosi = [0x02,(address>>16)&0xff,(address>>8)&0xff,address&0xff]
         # format data
         if type(data) is list:
-            tx += data * n
+            mosi += data * n
         else:
-            tx += [data] * n
+            mosi += [data] * n
+        if self.debug:
+            print("MOSI:",mosi,end="\t|\t")
         # spi transfer
         self.spi.open(self.bus,self.cs)
         self.spi.max_speed_hz = self.spi_hz
-        self.spi.xfer(tx)
+        miso = self.spi.xfer(mosi)
         self.spi.close()
+        if self.debug:
+            print("MISO:",miso)
+        return 0
+    
+    def fill(self,data): # write data to every index of memory
+        for block in range(self.size):
+            self.write(1024*block,data,n=1024)
+        return 0
+    
+    def check(self,data_pattern): # compare every index of memory to data_pattern, return tally of mismatched bits
+        tally = 0
+        for block in range(self.size):
+            data = self.read(1024*block,n=1024) # read 1024 bytes starting at 1024*block
+            for byte in range(1024): # iterate over block
+                if data[byte] != data_pattern: # if data doesn't match
+                    for bit in range(8): # check each bit in the byte
+                        tally += ((data[byte] ^ data_pattern) >> bit) & 0x01
+        return tally
+    
+    def save(self,file = "data/sram/save.csv"): # save sram state as a single-row csv with specified file path
+        data = [] # init data as list
+        for block in range(self.size):
+            data += self.read(1024*block,n=1024) # read 1024 bytes starting at 1024*block
+        with open(file, 'w') as csvfile: # open file in write mode
+            filewriter = csv.writer(csvfile,quoting=csv.QUOTE_MINIMAL) # make csv writer
+            filewriter.writerow(data) # write column labels
         return 0
