@@ -294,19 +294,39 @@ class sd_card(object):
         print("\tspi_hz:",self.spi_hz)
         print("\tdebug:",self.debug)
         return response
-        
+    
+# sram dependencies
+import board
+from busio import SPI
+from digitalio import DigitalInOut
+from digitalio import Direction
+from adafruit_bus_device.spi_device import SPIDevice
+   
+# memex.sram() object
 class sram(object):
     '''
     based on Microchip 23LC1024 (1 Mbit) and 23K256 (256 kbit)
     https://ww1.microchip.com/downloads/en/DeviceDoc/20005142C.pdf
     '''
-    def __init__(self,spi,bus=0,cs=0,size=32,name="SRAM",spi_hz=5000000,debug=False):
+    def __init__(self,
+                 spi = SPI(board.SCLK,MOSI=board.MOSI,MISO=board.MISO),
+                 cs = DigitalInOut(board.D8),
+                 hz = 5000000,
+                 size = 32,
+                 name = "SRAM",
+                 debug = False):
+
         self.spi = spi
-        self.bus = bus
+        self.spi.try_lock()
+        self.spi.configure(baudrate=hz)
+        self.spi.unlock()
+        
         self.cs = cs
+        self.cs.direction = Direction.OUTPUT
+        self.cs.value = True
+        
         self.size = size
         self.name = name
-        self.spi_hz = spi_hz
         self.debug = debug
         self.mode = None
         self.hold = None
@@ -316,13 +336,13 @@ class sram(object):
     def read_status(self): # read status register
         if self.debug:
             print("(read_status)",end=" ")
-        mosi = [0x05,0xff]
+        mosi = [0x05,0xff] # format mosi
+        miso = [0] * len(mosi) # pre-allocate miso
         if self.debug:
             print("MOSI:",mosi,end="\t|\t")
-        self.spi.open(self.bus,self.cs)
-        self.spi.max_speed_hz = self.spi_hz
-        miso = self.spi.xfer(mosi)
-        self.spi.close()
+        self.cs.value = False
+        self.spi.write_readinto(buffer_out=mosi,buffer_in=miso)
+        self.cs.value = True
         if self.debug:
             print("MISO:",miso)
         status = miso[1]
@@ -358,16 +378,16 @@ class sram(object):
         if hold is False:
             status += 1
         mosi = [0x01,status]
+        miso = [0] * len(mosi)
         if self.debug:
             print("MOSI:",mosi,end="\t|\t")
-        self.spi.open(self.bus,self.cs)
-        self.spi.max_speed_hz = self.spi_hz
-        miso = self.spi.xfer(mosi)
-        self.spi.close()
+        self.cs.value = False
+        self.spi.write_readinto(buffer_out=mosi,buffer_in=miso)
+        self.cs.value = True
         if self.debug:
             print("MISO:",miso)
         return 0
-        
+    
     def read(self,address,n=1): # read data starting at address. read multple bytes by defining "n"
         if self.debug:
             print("(read)",end=" ")
@@ -376,13 +396,13 @@ class sram(object):
             mosi = [0x03,(address>>8)&0xff,address&0xff] + ([0xff] * n)
         else: # 24-bit address
             mosi = [0x03,(address>>16)&0xff,(address>>8)&0xff,address&0xff] + ([0xff] * n)
+        miso = [0] * len(mosi)
         # spi transfer
         if self.debug:
             print("MOSI:",mosi,end="\t|\t")
-        self.spi.open(self.bus,self.cs)
-        self.spi.max_speed_hz = self.spi_hz
-        miso = self.spi.xfer(mosi)
-        self.spi.close()
+        self.cs.value = False
+        self.spi.write_readinto(buffer_out=mosi,buffer_in=miso)
+        self.cs.value = True
         if self.debug:
             print("MISO:",miso)
         if self.size < 1024: # 16-bit address
@@ -404,13 +424,13 @@ class sram(object):
             mosi += data * n
         else:
             mosi += [data] * n
+        miso = [0] * len(mosi)
         if self.debug:
             print("MOSI:",mosi,end="\t|\t")
         # spi transfer
-        self.spi.open(self.bus,self.cs)
-        self.spi.max_speed_hz = self.spi_hz
-        miso = self.spi.xfer(mosi)
-        self.spi.close()
+        self.cs.value = False
+        self.spi.write_readinto(buffer_out=mosi,buffer_in=miso)
+        self.cs.value = True
         if self.debug:
             print("MISO:",miso)
         return 0
