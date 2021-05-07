@@ -4,6 +4,8 @@
 
 # Memory Experiment (MemEx) v3
 
+![drawing](http://freevector.co/wp-content/uploads/2014/02/56416-grid-or-visualization-option-circular-interface-button.png)
+
 To ssh into the Raspberry Pi:
     1. Make sure you are using the UTC VPN (unless you're on campus).
     2. Open a new terminal and type `ssh pi@memex.research.utc.edu`
