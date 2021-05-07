@@ -1,6 +1,8 @@
-<b> University of Tennessee at Chattanooga </b> <br>
-<b> Reliable Electronics and Systems Lab </b>
-### Memory Experiment (MemEx) v3
+![drawing](https://scp-com.s3.amazonaws.com/314a1a15/University_of_Tennessee_at_Chattanooga_logo.svg.png)
+<br>
+![drawing](https://i.imgur.com/GIZFPgy.png)
+
+# Memory Experiment (MemEx) v3
 
 To ssh into the Raspberry Pi:
     1. Make sure you are using the UTC VPN (unless you're on campus).
