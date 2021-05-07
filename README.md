@@ -4,7 +4,7 @@
 
 # Memory Experiment (MemEx) v3
 
-![drawing](http://freevector.co/wp-content/uploads/2014/02/56416-grid-or-visualization-option-circular-interface-button.png)
+![drawing](http://cdn.onlinewebfonts.com/svg/img_63957.png)
 
 To ssh into the Raspberry Pi:
     1. Make sure you are using the UTC VPN (unless you're on campus).
