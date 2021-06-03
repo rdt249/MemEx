@@ -4,7 +4,7 @@ import os
 import csv
 
 def log(data, header, file = "data/log.csv"): # create or update log given a data row along with a header row
-    if ~os.path.isfile(file): # check if file exists
+    if os.path.isfile(file) is False: # check if file exists
         with open(file, 'w') as csvfile: # open file in write mode
             filewriter = csv.writer(csvfile,quoting=csv.QUOTE_MINIMAL) # make csv writer
             filewriter.writerow(header) # write column labels
@@ -297,10 +297,8 @@ class sd_card(object):
     
 # sram dependencies
 import board
-from busio import SPI
-from digitalio import DigitalInOut
-from digitalio import Direction
-from adafruit_bus_device.spi_device import SPIDevice
+import busio
+import digitalio
    
 # memex.sram() object
 class sram(object):
@@ -309,20 +307,16 @@ class sram(object):
     https://ww1.microchip.com/downloads/en/DeviceDoc/20005142C.pdf
     '''
     def __init__(self,
-                 spi = SPI(board.SCLK,MOSI=board.MOSI,MISO=board.MISO),
-                 cs = DigitalInOut(board.D8),
-                 hz = 5000000,
+                 spi,
+                 cs = board.D8,
                  size = 32,
                  name = "SRAM",
                  debug = False):
 
         self.spi = spi
-        self.spi.try_lock()
-        self.spi.configure(baudrate=hz)
-        self.spi.unlock()
         
-        self.cs = cs
-        self.cs.direction = Direction.OUTPUT
+        self.cs = digitalio.DigitalInOut(cs)
+        self.cs.direction = digitalio.Direction.OUTPUT
         self.cs.value = True
         
         self.size = size
@@ -331,7 +325,9 @@ class sram(object):
         self.mode = None
         self.hold = None
         time.sleep(0.1)
-        self.read_status()
+        
+        self.set_status() # set default status
+        #self.read_status() # read status to check comms
         
     def read_status(self): # read status register
         if self.debug:
@@ -354,9 +350,9 @@ class sram(object):
         if status >> 6 is 0:
             self.mode = "byte"
         elif status >> 6 is 1:
-            self.mode = "page"
-        elif status >> 6 is 2:
             self.mode = "sequential"
+        elif status >> 6 is 2:
+            self.mode = "page"
         # check hold bit
         if (status & 0x01) is True:
             self.hold = True
@@ -368,11 +364,11 @@ class sram(object):
         if self.debug:
             print("(set_status)",end=" ")
         # set mode
-        if mode is "byte":
+        if mode in ["byte",'b']:
             status = 0
-        elif mode is "page":
+        elif mode in ["sequential",'s']:
             status = 0x40
-        elif mode is "sequential":
+        elif mode in ["page",'p']:
             status = 0x80
         # set hold
         if hold is False:
@@ -393,9 +389,9 @@ class sram(object):
             print("(read)",end=" ")
         # format message
         if self.size < 1024: # 16-bit address
-            mosi = [0x03,(address>>8)&0xff,address&0xff] + ([0xff] * n)
+            mosi = [0x03,(address>>8)&0xff,address&0xff] + [0xff] * n
         else: # 24-bit address
-            mosi = [0x03,(address>>16)&0xff,(address>>8)&0xff,address&0xff] + ([0xff] * n)
+            mosi = [0x03,(address>>16)&0xff,(address>>8)&0xff,address&0xff] + [0xff] * n
         miso = [0] * len(mosi)
         # spi transfer
         if self.debug:
@@ -436,12 +432,15 @@ class sram(object):
         return 0
     
     def fill(self,data): # write data to every index of memory
+        self.set_status() # set default status (sequential)
         for block in range(self.size):
             self.write(1024*block,data,n=1024)
+            time.sleep(0.01) # short delay
         return 0
     
     def check(self,data_pattern): # compare every index of memory to data_pattern, return tally of mismatched bits
         tally = 0
+        self.set_status() # set default status (sequential)
         for block in range(self.size):
             data = self.read(1024*block,n=1024) # read 1024 bytes starting at 1024*block
             for byte in range(1024): # iterate over block
@@ -452,9 +451,64 @@ class sram(object):
     
     def save(self,file = "data/sram/save.csv"): # save sram state as a single-row csv with specified file path
         data = [] # init data as list
+        self.set_status() # set default status (sequential)
         for block in range(self.size):
             data += self.read(1024*block,n=1024) # read 1024 bytes starting at 1024*block
         with open(file, 'w') as csvfile: # open file in write mode
             filewriter = csv.writer(csvfile,quoting=csv.QUOTE_MINIMAL) # make csv writer
             filewriter.writerow(data) # write column labels
         return 0
+'''
+import board
+import busio
+import adafruit_mcp4725
+import adafruit_ads1x15.ads1115 as ADS
+from adafruit_ads1x15.analog_in import AnalogIn
+
+def set_voltage(v, timeout = 1,
+                dac=adafruit_mcp4725.MCP4725(busio.I2C(board.SCL, board.SDA)),
+                adc_ch=AnalogIn(ADS.ADS1115(busio.I2C(board.SCL, board.SDA)), ADS.P0),
+                debug = False):
+    start = time.time()
+    if v > 4.095: # exceeds maximum
+        dac.raw_value = 4095
+        return adc_ch.voltage
+    elif v < 0.001: # exceeds minimum
+        dac.raw_value = 0
+        return adc_ch.voltage
+    dac.raw_value = int(v*1000) # set starting value
+    while round(adc_ch.voltage,3) != round(v,3): # set voltage using feedback loop
+        time.sleep(0.01)
+            
+        if adc_ch.voltage - v > 0.1:
+            delta = -100
+        elif adc_ch.voltage - v > 0.01:
+            delta = -10
+        elif adc_ch.voltage - v > 0.001:
+            delta = -1
+            
+        if adc_ch.voltage - v < -0.1:
+            delta = 100
+        if adc_ch.voltage - v < -0.01:
+            delta = 10
+        elif adc_ch.voltage - v < -0.001:
+            delta = 1
+        
+        if debug:
+            print(adc_ch.voltage, dac.raw_value, delta)
+            
+        if dac.raw_value + delta > 4095: # exceeds maximum
+            dac.raw_value = 4095
+        elif dac.raw_value + delta < 0: # exceeds minimum
+            dac.raw_value = 0
+        else:
+            dac.raw_value += delta
+        
+        if time.time() - start > timeout:
+            #print("Error in memex.set_voltage(): timed out")
+            break
+    return adc_ch.voltage
+
+def timestamp():
+    return int(time.time())
+'''
