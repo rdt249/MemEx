@@ -15,9 +15,14 @@ def log(data, header, file = "data/log.csv"): # create or update log given a dat
 import time
 import board
 import busio
-import adafruit_ina260
+import pandas as pd
+import adafruit_ina219
 import adafruit_sht31d
 import adafruit_mcp9808
+import adafruit_mcp4728
+import adafruit_ads1x15.ads1115 as ADS
+from adafruit_ads1x15.analog_in import AnalogIn
+from multiprocessing import Process
 
 def sense(): # print output of i2c sensors
     i2c = busio.I2C(board.SCL, board.SDA) # init i2c bus
@@ -46,6 +51,42 @@ def sense(): # print output of i2c sensors
     print(*header,sep='\t') # print column titles
     print(*data,sep='\t') # print data
     return data # return sensor data
+
+#write voltages of adc to a pandas dataframe
+def check_status_adc(samp, 
+                     adc = AnalogIn(ADS.ADS1115(busio.I2C(board.SCL, board.SDA)), ADS.P0),
+                     channel = 'a'):
+    
+    # samp --> number of data samples to take.
+    data = [0]*samp
+    t0 = time.time()
+    for i in range(samp):
+        
+        t1 = time.time()
+        volt = adc.voltage
+        
+        data[i] = [volt, round(t1 - t0,2)] 
+        
+    df = pd.DataFrame(data, columns = ['Voltage', 'Time'])
+   
+    return df
+
+def check_status(samp,
+                 sensor = adafruit_ina219.INA219(busio.I2C(board.SCL, board.SDA))):
+    
+    # samp --> number of data samples to take.
+    data = [0]*samp
+    t0 = time.time()
+    for i in range(samp):
+        
+        t1 = time.time()
+        volt = sensor.bus_voltage
+        current = sensor.current
+        
+        data[i] = [volt, current, round(t1 - t0,2)] 
+        
+    df = pd.DataFrame(data, columns = ['Voltage','Current', 'Time'])
+    return df
         
 import spidev
 import time
@@ -310,8 +351,10 @@ class sram(object):
                  spi,
                  cs = board.D8,
                  size = 32,
+                 bit_address = 16,
                  name = "SRAM",
-                 debug = False):
+                 debug = False,
+                 skip_setup = False):
 
         self.spi = spi
         
@@ -320,14 +363,16 @@ class sram(object):
         self.cs.value = True
         
         self.size = size
+        self.bit_address = bit_address
         self.name = name
         self.debug = debug
         self.mode = None
         self.hold = None
         time.sleep(0.1)
         
-        self.set_status() # set default status
-        #self.read_status() # read status to check comms
+        if skip_setup:
+            self.set_status() # set default status
+            #self.read_status() # read status to check comms
         
     def read_status(self): # read status register
         if self.debug:
@@ -388,8 +433,11 @@ class sram(object):
         if self.debug:
             print("(read)",end=" ")
         # format message
-        if self.size < 1024: # 16-bit address
+        if self.bit_address == 16: # 16-bit address
             mosi = [0x03,(address>>8)&0xff,address&0xff] + [0xff] * n
+        elif self.bit_address == 17: # 17-bit address
+            mosi = [0x03,(address>>8)&0xff,address&0xff] + [0xff] * n
+            print(mosi)
         else: # 24-bit address
             mosi = [0x03,(address>>16)&0xff,(address>>8)&0xff,address&0xff] + [0xff] * n
         miso = [0] * len(mosi)
@@ -401,7 +449,7 @@ class sram(object):
         self.cs.value = True
         if self.debug:
             print("MISO:",miso)
-        if self.size < 1024: # 16-bit address
+        if self.bit_address == 16: # 16-bit address
             data = miso[3:]
         else: # 24-bit address
             data = miso[4:]
@@ -411,7 +459,7 @@ class sram(object):
         if self.debug:
             print("(write)",end=" ")
         # format address
-        if self.size < 1024: # 16-bit address
+        if self.bit_address == 16: # 16-bit address
             mosi = [0x02,(address>>8)&0xff,address&0xff]
         else: # 24-bit address
             mosi = [0x02,(address>>16)&0xff,(address>>8)&0xff,address&0xff]
@@ -449,6 +497,29 @@ class sram(object):
                         tally += ((data[byte] ^ data_pattern) >> bit) & 0x01
         return tally
     
+    def check_address(self,data_pattern): # compare every index of memory to data_pattern, return tally of mismatched bits
+        tally = 0
+        self.set_status() # set default status (sequential)
+        
+        bit_ls = [False] * self.size * 1024 * 8
+        bit_addr = 0
+        
+        for block in range(self.size):
+            data = self.read(1024*block,n=1024) # read 1024 bytes starting at 1024*block
+            
+            for byte in range(1024): # iterate over block
+                if data[byte] != data_pattern: # if data doesn't match
+                    for bit in range(8): # check each bit in the byte
+                        tally += ((data[byte] ^ data_pattern) >> bit) & 0x01
+                        if (((data[byte] ^ data_pattern) >> bit) & 0x01) == 1:
+                            bit_ls[bit_addr] = True
+                        
+                        bit_addr += 1
+                        
+                else: #if data does match
+                    bit_addr += 8
+        return tally, bit_ls
+    
     def save(self,file = "data/sram/save.csv"): # save sram state as a single-row csv with specified file path
         data = [] # init data as list
         self.set_status() # set default status (sequential)
@@ -458,6 +529,127 @@ class sram(object):
             filewriter = csv.writer(csvfile,quoting=csv.QUOTE_MINIMAL) # make csv writer
             filewriter.writerow(data) # write column labels
         return 0
+    
+    def save_list(self, save_size = 0): # save sram state as a single-row csv with specified file path
+        if save_size == 0:
+            save_size = self.size
+        data = [] # init data as list
+        self.set_status() # set default status (sequential)
+        for block in range(save_size):
+            data += self.read(1024*block,n=1024) # read 1024 bytes starting at 1024*block
+        return data
+
+def set_voltage_4(voltages = {'a':0, 'b':0, 'c':0, 'd':0}, 
+                       timeout = 1,
+                       dac = adafruit_mcp4728.MCP4728(busio.I2C(board.SCL, board.SDA)),
+                       adc_ch0 = AnalogIn(ADS.ADS1115(busio.I2C(board.SCL, board.SDA)), ADS.P0),
+                       adc_ch1 = AnalogIn(ADS.ADS1115(busio.I2C(board.SCL, board.SDA)), ADS.P1),
+                       adc_ch2 = AnalogIn(ADS.ADS1115(busio.I2C(board.SCL, board.SDA)), ADS.P2),
+                       adc_ch3 = AnalogIn(ADS.ADS1115(busio.I2C(board.SCL, board.SDA)), ADS.P3),
+                       debug = False):
+    
+    """Set voltages using via a feedback loop from the MCP4728 (DAC) to ADS115 (ADC)
+    Args:
+      voltages(dict):  voltages to set. Must be a dictionary with keys 'a', 'b', 'c', and 'd'.
+      sample_dict = {
+        'a' : 0,
+        'b' : 1.5,
+        'c' : 2,
+        'd' : 2.5
+        }
+        
+      timeout(float): maximum time before feedback loop times out and breaks the while loop
+      
+      dac(adafruit_mcp4728.MCP4728): dac object
+      
+      adc_chx(adafruit_ads1x15.analog_in.AnalogIn): AnalogIn object for adc
+
+    Returns:
+        Final voltages read by ADC
+    """
+    
+    adc_channels = {
+        'a' : '0',
+        'b' : '1',
+        'c' : '2',
+        'd' : '3'
+        }
+    
+    
+    for key in voltages:
+        
+        start = time.time()
+        dac_ch = eval('dac.channel_%s'%(key))
+        adc_ch = eval('adc_ch%s'%(adc_channels[key]))
+        v = voltages[key]
+        
+        if v > 3.74: # exceeds maximum
+            dac_ch.raw_value = 4095
+            continue
+        elif v < 0.001: # exceeds minimum
+            dac_ch.raw_value = 0
+            continue
+        dac_ch.raw_value = int(v/5.1 * 4095) # set starting value
+        
+        while round(adc_ch.voltage,3) != round(v,3): # set voltage using feedback loop
+            time.sleep(0.01)
+            delta=0
+            if adc_ch.voltage - v > 0.1:
+                delta = -100
+            elif adc_ch.voltage - v > 0.01:
+                delta = -10
+            elif adc_ch.voltage - v > 0.001:
+                delta = -1
+
+            if adc_ch.voltage - v < -0.1:
+                delta = 100
+            if adc_ch.voltage - v < -0.01:
+                delta = 10
+            elif adc_ch.voltage - v < -0.001:
+                delta = 1
+
+            if debug:
+                print(adc_ch.voltage, dac_ch.raw_value, delta)
+
+            if dac_ch.raw_value + delta > 4095: # exceeds maximum
+                dac_ch.raw_value = 4095
+                break
+            elif dac_ch.raw_value + delta < 0: # exceeds minimum
+                dac_ch.raw_value = 0
+                break
+            else:
+                dac_ch.raw_value += delta
+
+            if time.time() - start > timeout:
+                print("Error in memex.set_voltage(): timed out")
+                break
+    
+    
+    return [[adc_ch0.voltage, dac.channel_a.raw_value], 
+            [adc_ch1.voltage, dac.channel_b.raw_value], 
+            [adc_ch2.voltage, dac.channel_c.raw_value], 
+            [adc_ch3.voltage, dac.channel_d.raw_value]]
+    
+def vramp(start_v, end_v, step_size = 2,
+         dac = adafruit_mcp4728.MCP4728(busio.I2C(board.SCL, board.SDA)),
+         channel = 'a'):
+
+    dac_ch = eval('dac.channel_%s'%(channel))
+
+    #find/end beginning voltage
+    start_raw_value = set_voltage_4(voltages = {'a':start_v}, debug=False)[0][1]
+    end_raw_value = set_voltage_4(voltages = {'a':end_v}, debug=False)[0][1]
+
+    delta = end_raw_value - start_raw_value
+#     rate = duration/delta # increase a bit every time this unit passes
+
+    for bit in range(int(delta/step_size)):
+
+        dac_ch.raw_value = start_raw_value + step_size*bit
+
+#         time.sleep(rate)
+
+    return 0
 '''
 import board
 import busio

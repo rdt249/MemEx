@@ -1,0 +1,13 @@
+level_0,level_1,test
+cypress,Leakage Current [mA],10.0
+cypress,Read Current [mA],
+cypress,Write Current [mA],
+issi,Leakage Current [mA],
+issi,Read Current [mA],
+issi,Write Current [mA],
+microchip,Leakage Current [mA],
+microchip,Read Current [mA],
+microchip,Write Current [mA],
+on,Leakage Current [mA],
+on,Read Current [mA],
+on,Write Current [mA],
