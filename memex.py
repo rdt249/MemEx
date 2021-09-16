@@ -548,7 +548,7 @@ def find_vdr(n=5,inc=0.001,vmax=0.5,vmin='auto',alt=False) :
 
 ############################ SEU DETECTION ############################
     
-def seu_trial(v='auto',t='auto',size=32,pattern=85,threshold=1000) :
+def seu_trial(v='auto',t='auto',size=32,pattern=85,threshold=1000,alt=False) :
     if trial is None:
         print('please use memex.create_trial() to specify a trial csv')
         return 0
@@ -567,7 +567,10 @@ def seu_trial(v='auto',t='auto',size=32,pattern=85,threshold=1000) :
         flips = pd.DataFrame(columns=['v','t']+slots)
     
     for i in range(len(slots)) :
-        fill(pins[i],pattern,size=size,addr_bytes=addr[i])
+        if alt :
+            fill_alt(pins[i],pattern,size=size,addr_bytes=addr[i])
+        else :
+            fill(pins[i],pattern,size=size,addr_bytes=addr[i])
     if v == 'auto' :
         v = float(input('enter holding voltage (V) : '))
     if t == 'auto' :
@@ -600,11 +603,45 @@ def seu_trial(v='auto',t='auto',size=32,pattern=85,threshold=1000) :
         time.sleep(0.1)
     set_nominal()
     
+    print('scanning for SEUs')
     data = pd.DataFrame(columns=slots)
     bits = [0] * len(slots)
     check = bytes2bits([pattern] * (1024 * size))
     for i in range(len(slots)) :
-        data[slots[i]] = bytes2bits(read(pins[i],size=size,addr_bytes=addr[i]))
+        if alt :
+            data[slots[i]] = bytes2bits(read_alt(pins[i],size=size,addr_bytes=addr[i]))
+        else :
+            data[slots[i]] = bytes2bits(read(pins[i],size=size,addr_bytes=addr[i]))
+        data[slots[i]] = [x!=y for x,y in zip(data[slots[i]],check)]
+        bits[i] = list(data[slots[i]].where(data[slots[i]]==True).dropna().index)
+    flips.loc[len(flips.index)] = [v,t] + bits 
+    flips.to_csv(trial,index=False)
+    return data.sum()
+    
+def seu_scan(v='auto',t='auto',size=32,pattern=85,threshold=1000) :
+    if trial is None:
+        print('please use memex.create_trial() to specify a trial csv')
+        return 0
+    print(trial)
+        
+    active,awake,addr_bytes = rollcall(show=False)
+    pins = [board.D5,board.D6,board.D13,board.D19,board.D26,board.D24,
+            board.D25,board.D7,board.D12,board.D16,board.D20,board.D21]
+    pins = [x for (x, y) in zip(pins, awake) if y]
+    slots = ['A1','A2','A3','B1','B2','B3','C1','C2','C3','D1','D2','D3']
+    slots = [x for (x, y) in zip(slots, awake) if y]
+    addr = [x for (x, y) in zip(addr_bytes, awake) if y]
+    try :
+        flips = pd.read_csv(trial)
+    except FileNotFoundError :
+        flips = pd.DataFrame(columns=['v','t']+slots)
+    
+    print('scanning for SEUs')
+    data = pd.DataFrame(columns=slots)
+    bits = [0] * len(slots)
+    check = bytes2bits([pattern] * (1024 * size))
+    for i in range(len(slots)) :
+        data[slots[i]] = bytes2bits(read_alt(pins[i],size=size,addr_bytes=addr[i]))
         data[slots[i]] = [x!=y for x,y in zip(data[slots[i]],check)]
         bits[i] = list(data[slots[i]].where(data[slots[i]]==True).dropna().index)
     flips.loc[len(flips.index)] = [v,t] + bits 
