@@ -316,8 +316,6 @@ def rollcall(status=0x41,show=True) :
             board.D25,board.D7,board.D12,board.D16,board.D20,board.D21]
     slots = ['A1','A2','A3','B1','B2','B3','C1','C2','C3','D1','D2','D3']
     global active, awake, addr_bytes
-    #awake = [False] * len(pins)
-    #addr_bytes = [0] * len(pins)
     with busio.SPI(board.SCLK,MOSI=board.MOSI,MISO=board.MISO) as spi :
         spi.try_lock()
         spi.configure(baudrate=baud)
@@ -332,27 +330,26 @@ def rollcall(status=0x41,show=True) :
                 cs.value = False
                 spi.write_readinto(buffer_out=mosi,buffer_in=miso)
                 cs.value = True
-                time.sleep(0.01)
                 mosi = [0x05,0xff] # format mosi (read status register)
                 miso = [0] * len(mosi) # pre-allocate miso
                 cs.value = False
                 spi.write_readinto(buffer_out=mosi,buffer_in=miso)
                 cs.value = True
-                status = miso[1]
+                response = miso[1]
                 
                 if show :
                     print(slots[i] + ':',end='\t')
-                    print('status=' + str(status),end='\t')
-                    if status >> 6 is 0:
+                    print('status=' + str(response),end='\t')
+                    if response >> 6 is 0:
                         print('mode=byte',end='\t')
-                    elif status >> 6 is 1:
+                    elif response >> 6 is 1:
                         print('mode=sequential',end='\t')
-                    elif status >> 6 is 2:
+                    elif response >> 6 is 2:
                         print('mode=page',end='\t')
                     else :
                         print('mode=unknown',end='\t')
 
-                    if (status & 0x01) is True:
+                    if (response & 0x01) is True:
                         print('hold=enabled',end='\t')
                     else:
                         print('hold=disabled',end='\t')
